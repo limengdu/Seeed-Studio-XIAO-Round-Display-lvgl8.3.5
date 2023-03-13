@@ -72,7 +72,6 @@ typedef struct _lv_draw_ctx_t  {
      */
     const lv_area_t * clip_area;
 
-    void (*init_buf)(struct _lv_draw_ctx_t * draw_ctx);
 
     void (*draw_rect)(struct _lv_draw_ctx_t * draw_ctx, const lv_draw_rect_dsc_t * dsc, const lv_area_t * coords);
 

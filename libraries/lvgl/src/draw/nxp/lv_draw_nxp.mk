@@ -1,3 +1,5 @@
+CSRCS += lv_gpu_nxp.c
+
 DEPPATH += --dep-path $(LVGL_DIR)/$(LVGL_DIR_NAME)/src/draw/nxp
 VPATH += :$(LVGL_DIR)/$(LVGL_DIR_NAME)/src/draw/nxp
 

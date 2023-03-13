@@ -6,7 +6,7 @@
 /**
  * MIT License
  *
- * Copyright 2020-2023 NXP
+ * Copyright 2020-2022 NXP
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -34,28 +34,32 @@
 #include "lv_draw_pxp_blend.h"
 
 #if LV_USE_GPU_NXP_PXP
-#include "lvgl_support.h"
 
 /*********************
  *      DEFINES
  *********************/
 
-#define PXP_TEMP_BUF_SIZE LCD_WIDTH * LCD_HEIGHT * LCD_FB_BYTE_PER_PIXEL
-
 #if LV_COLOR_16_SWAP
     #error Color swap not implemented. Disable LV_COLOR_16_SWAP feature.
 #endif
 
-#if LV_COLOR_DEPTH == 16
+#if LV_COLOR_DEPTH==16
     #define PXP_OUT_PIXEL_FORMAT kPXP_OutputPixelFormatRGB565
     #define PXP_AS_PIXEL_FORMAT kPXP_AsPixelFormatRGB565
     #define PXP_PS_PIXEL_FORMAT kPXP_PsPixelFormatRGB565
-#elif LV_COLOR_DEPTH == 32
+#elif LV_COLOR_DEPTH==32
     #define PXP_OUT_PIXEL_FORMAT kPXP_OutputPixelFormatARGB8888
     #define PXP_AS_PIXEL_FORMAT kPXP_AsPixelFormatARGB8888
     #define PXP_PS_PIXEL_FORMAT kPXP_PsPixelFormatRGB888
 #elif
     #error Only 16bit and 32bit color depth are supported. Set LV_COLOR_DEPTH to 16 or 32.
+#endif
+
+#if defined (__alpha__) || defined (__ia64__) || defined (__x86_64__) \
+    || defined (_WIN64) || defined (__LP64__) || defined (__LLP64__)
+    #define ALIGN_SIZE 8
+#else
+    #define ALIGN_SIZE 4
 #endif
 
 /**********************
@@ -66,60 +70,63 @@
  *  STATIC PROTOTYPES
  **********************/
 
-static LV_ATTRIBUTE_MEM_ALIGN uint8_t temp_buf[PXP_TEMP_BUF_SIZE];
-
 /**
  * BLock Image Transfer - copy rectangular image from src buffer to dst buffer
  * with combination of transformation (rotation, scale, recolor) and opacity, alpha channel
  * or color keying. This requires two steps. First step is used for transformation into
  * a temporary buffer and the second one will handle the color format or opacity.
  *
- * @param[in/out] dest_buf Destination buffer
- * @param[in] dest_area Area with relative coordinates of destination buffer
- * @param[in] dest_stride Stride of destination buffer in pixels
- * @param[in] src_buf Source buffer
- * @param[in] src_area Area with relative coordinates of source buffer
- * @param[in] src_stride Stride of source buffer in pixels
- * @param[in] dsc Image descriptor
- * @param[in] cf Color format
+ * @param[in/out] dest_buf destination buffer
+ * @param[in] dest_area area to be copied from src_buf to dst_buf
+ * @param[in] dest_stride width (stride) of destination buffer in pixels
+ * @param[in] src_buf source buffer
+ * @param[in] src_area source area with absolute coordinates to draw on destination buffer
+ * @param[in] dsc image descriptor
+ * @param[in] cf color format
+ * @retval LV_RES_OK Fill completed
+ * @retval LV_RES_INV Error occurred (\see LV_GPU_NXP_PXP_LOG_ERRORS)
  */
-static void lv_pxp_blit_opa(lv_color_t * dest_buf, const lv_area_t * dest_area, lv_coord_t dest_stride,
-                            const lv_color_t * src_buf, const lv_area_t * src_area, lv_coord_t src_stride,
-                            const lv_draw_img_dsc_t * dsc, lv_img_cf_t cf);
+static lv_res_t lv_gpu_nxp_pxp_blit_opa(lv_color_t * dest_buf, const lv_area_t * dest_area, lv_coord_t dest_stride,
+                                        const lv_color_t * src_buf, const lv_area_t * src_area,
+                                        const lv_draw_img_dsc_t * dsc, lv_img_cf_t cf);
 
 /**
  * BLock Image Transfer - copy rectangular image from src buffer to dst buffer
  * with transformation and full opacity.
  *
- * @param[in/out] dest_buf Destination buffer
- * @param[in] dest_area Area with relative coordinates of destination buffer
- * @param[in] dest_stride Stride of destination buffer in pixels
- * @param[in] src_buf Source buffer
- * @param[in] src_area Area with relative coordinates of source buffer
- * @param[in] src_stride Stride of source buffer in pixels
- * @param[in] dsc Image descriptor
- * @param[in] cf Color format
+ * @param[in/out] dest_buf destination buffer
+ * @param[in] dest_area area to be copied from src_buf to dst_buf
+ * @param[in] dest_stride width (stride) of destination buffer in pixels
+ * @param[in] src_buf source buffer
+ * @param[in] src_area source area with absolute coordinates to draw on destination buffer
+ * @param[in] dsc image descriptor
+ * @param[in] cf color format
+ * @retval LV_RES_OK Fill completed
+ * @retval LV_RES_INV Error occurred (\see LV_GPU_NXP_PXP_LOG_ERRORS)
  */
-static void lv_pxp_blit_cover(lv_color_t * dest_buf, const lv_area_t * dest_area, lv_coord_t dest_stride,
-                              const lv_color_t * src_buf, const lv_area_t * src_area, lv_coord_t src_stride,
-                              const lv_draw_img_dsc_t * dsc, lv_img_cf_t cf);
+static lv_res_t lv_gpu_nxp_pxp_blit_cover(lv_color_t * dest_buf, const lv_area_t * dest_area,
+                                          lv_coord_t dest_stride,
+                                          const lv_color_t * src_buf, const lv_area_t * src_area,
+                                          const lv_draw_img_dsc_t * dsc, lv_img_cf_t cf);
 
 /**
  * BLock Image Transfer - copy rectangular image from src buffer to dst buffer
  * without transformation but handling color format or opacity.
  *
- * @param[in/out] dest_buf Destination buffer
- * @param[in] dest_area Area with relative coordinates of destination buffer
- * @param[in] dest_stride Stride of destination buffer in pixels
- * @param[in] src_buf Source buffer
- * @param[in] src_area Area with relative coordinates of source buffer
- * @param[in] src_stride Stride of source buffer in pixels
- * @param[in] dsc Image descriptor
- * @param[in] cf Color format
+ * @param[in/out] dest_buf destination buffer
+ * @param[in] dest_area area to be copied from src_buf to dst_buf
+ * @param[in] dest_stride width (stride) of destination buffer in pixels
+ * @param[in] src_buf source buffer
+ * @param[in] src_area source area with absolute coordinates to draw on destination buffer
+ * @param[in] dsc image descriptor
+ * @param[in] cf color format
+ * @retval LV_RES_OK Fill completed
+ * @retval LV_RES_INV Error occurred (\see LV_GPU_NXP_PXP_LOG_ERRORS)
  */
-static void lv_pxp_blit_cf(lv_color_t * dest_buf, const lv_area_t * dest_area, lv_coord_t dest_stride,
-                           const lv_color_t * src_buf, const lv_area_t * src_area, lv_coord_t src_stride,
-                           const lv_draw_img_dsc_t * dsc, lv_img_cf_t cf);
+static lv_res_t lv_gpu_nxp_pxp_blit_cf(lv_color_t * dest_buf, const lv_area_t * dest_area,
+                                       lv_coord_t dest_stride,
+                                       const lv_color_t * src_buf, const lv_area_t * src_area,
+                                       const lv_draw_img_dsc_t * dsc, lv_img_cf_t cf);
 
 /**********************
  *  STATIC VARIABLES
@@ -129,27 +136,45 @@ static void lv_pxp_blit_cf(lv_color_t * dest_buf, const lv_area_t * dest_area, l
  *      MACROS
  **********************/
 
+#define ROUND_UP(x, align) ((x + (align - 1)) & ~(align - 1))
+
 /**********************
  *   GLOBAL FUNCTIONS
  **********************/
 
-void lv_gpu_nxp_pxp_fill(lv_color_t * dest_buf, const lv_area_t * dest_area, lv_coord_t dest_stride,
-                         lv_color_t color, lv_opa_t opa)
+lv_res_t lv_gpu_nxp_pxp_fill(lv_color_t * dest_buf, lv_coord_t dest_stride, const lv_area_t * fill_area,
+                             lv_color_t color, lv_opa_t opa)
 {
-    lv_coord_t dest_w = lv_area_get_width(dest_area);
-    lv_coord_t dest_h = lv_area_get_height(dest_area);
+    uint32_t area_size = lv_area_get_size(fill_area);
+    lv_coord_t area_w = lv_area_get_width(fill_area);
+    lv_coord_t area_h = lv_area_get_height(fill_area);
 
-    lv_gpu_nxp_pxp_reset();
+    if(opa >= (lv_opa_t)LV_OPA_MAX) {
+        if(area_size < LV_GPU_NXP_PXP_FILL_SIZE_LIMIT) {
+            PXP_LOG_TRACE("Area size %d smaller than limit %d.", area_size, LV_GPU_NXP_PXP_FILL_SIZE_LIMIT);
+            return LV_RES_INV;
+        }
+    }
+    else {
+        if(area_size < LV_GPU_NXP_PXP_FILL_OPA_SIZE_LIMIT) {
+            PXP_LOG_TRACE("Area size %d smaller than limit %d.", area_size, LV_GPU_NXP_PXP_FILL_OPA_SIZE_LIMIT);
+            return LV_RES_INV;
+        }
+    }
+
+    PXP_Init(LV_GPU_NXP_PXP_ID);
+    PXP_EnableCsc1(LV_GPU_NXP_PXP_ID, false); /*Disable CSC1, it is enabled by default.*/
+    PXP_SetProcessBlockSize(LV_GPU_NXP_PXP_ID, kPXP_BlockSize16); /*Block size 16x16 for higher performance*/
 
     /*OUT buffer configure*/
     pxp_output_buffer_config_t outputConfig = {
         .pixelFormat = PXP_OUT_PIXEL_FORMAT,
         .interlacedMode = kPXP_OutputProgressive,
-        .buffer0Addr = (uint32_t)(dest_buf + dest_stride * dest_area->y1 + dest_area->x1),
+        .buffer0Addr = (uint32_t)(dest_buf + dest_stride * fill_area->y1 + fill_area->x1),
         .buffer1Addr = (uint32_t)NULL,
         .pitchBytes = dest_stride * sizeof(lv_color_t),
-        .width = dest_w,
-        .height = dest_h
+        .width = area_w,
+        .height = area_h
     };
 
     PXP_SetOutputBufferConfig(LV_GPU_NXP_PXP_ID, &outputConfig);
@@ -168,7 +193,7 @@ void lv_gpu_nxp_pxp_fill(lv_color_t * dest_buf, const lv_area_t * dest_area, lv_
         };
 
         PXP_SetAlphaSurfaceBufferConfig(LV_GPU_NXP_PXP_ID, &asBufferConfig);
-        PXP_SetAlphaSurfacePosition(LV_GPU_NXP_PXP_ID, 0U, 0U, dest_w - 1U, dest_h - 1U);
+        PXP_SetAlphaSurfacePosition(LV_GPU_NXP_PXP_ID, 0U, 0U, area_w, area_h);
     }
 
     /*Disable PS, use as color generator*/
@@ -198,19 +223,34 @@ void lv_gpu_nxp_pxp_fill(lv_color_t * dest_buf, const lv_area_t * dest_area, lv_
 
     PXP_SetPorterDuffConfig(LV_GPU_NXP_PXP_ID, &pdConfig);
 
-    lv_gpu_nxp_pxp_run();
+    lv_gpu_nxp_pxp_run(); /*Start PXP task*/
+
+    return LV_RES_OK;
 }
 
-void lv_gpu_nxp_pxp_blit(lv_color_t * dest_buf, const lv_area_t * dest_area, lv_coord_t dest_stride,
-                         const lv_color_t * src_buf, const lv_area_t * src_area, lv_coord_t src_stride,
-                         lv_opa_t opa, lv_disp_rot_t angle)
+lv_res_t lv_gpu_nxp_pxp_blit(lv_color_t * dest_buf, const lv_area_t * dest_area, lv_coord_t dest_stride,
+                             const lv_color_t * src_buf, const lv_area_t * src_area, lv_opa_t opa, lv_disp_rot_t angle)
 {
+    uint32_t dest_size = lv_area_get_size(dest_area);
     lv_coord_t dest_w = lv_area_get_width(dest_area);
     lv_coord_t dest_h = lv_area_get_height(dest_area);
-    lv_coord_t src_w = lv_area_get_width(src_area);
-    lv_coord_t src_h = lv_area_get_height(src_area);
 
-    lv_gpu_nxp_pxp_reset();
+    if(opa >= (lv_opa_t)LV_OPA_MAX) {
+        if(dest_size < LV_GPU_NXP_PXP_BLIT_SIZE_LIMIT) {
+            PXP_LOG_TRACE("Area size %d smaller than limit %d.", dest_size, LV_GPU_NXP_PXP_BLIT_SIZE_LIMIT);
+            return LV_RES_INV;
+        }
+    }
+    else {
+        if(dest_size < LV_GPU_NXP_PXP_BLIT_OPA_SIZE_LIMIT) {
+            PXP_LOG_TRACE("Area size %d smaller than limit %d.", dest_size, LV_GPU_NXP_PXP_BLIT_OPA_SIZE_LIMIT);
+            return LV_RES_INV;
+        }
+    }
+
+    PXP_Init(LV_GPU_NXP_PXP_ID);
+    PXP_EnableCsc1(LV_GPU_NXP_PXP_ID, false); /*Disable CSC1, it is enabled by default.*/
+    PXP_SetProcessBlockSize(LV_GPU_NXP_PXP_ID, kPXP_BlockSize16); /*block size 16x16 for higher performance*/
 
     /* convert rotation angle */
     pxp_rotate_degree_t pxp_rot;
@@ -257,17 +297,19 @@ void lv_gpu_nxp_pxp_blit(lv_color_t * dest_buf, const lv_area_t * dest_area, lv_
         asBlendConfig.alphaMode = kPXP_AlphaOverride;
 
         PXP_SetProcessSurfaceBufferConfig(LV_GPU_NXP_PXP_ID, &psBufferConfig);
-        PXP_SetProcessSurfacePosition(LV_GPU_NXP_PXP_ID, 0U, 0U, dest_w - 1U, dest_h - 1U);
+        PXP_SetProcessSurfacePosition(LV_GPU_NXP_PXP_ID, 0U, 0U, dest_w - 1, dest_h - 1);
     }
+
+    lv_coord_t src_stride = lv_area_get_width(src_area);
 
     /*AS buffer - source image*/
     pxp_as_buffer_config_t asBufferConfig = {
         .pixelFormat = PXP_AS_PIXEL_FORMAT,
-        .bufferAddr = (uint32_t)(src_buf + src_stride * src_area->y1 + src_area->x1),
+        .bufferAddr = (uint32_t)src_buf,
         .pitchBytes = src_stride * sizeof(lv_color_t)
     };
     PXP_SetAlphaSurfaceBufferConfig(LV_GPU_NXP_PXP_ID, &asBufferConfig);
-    PXP_SetAlphaSurfacePosition(LV_GPU_NXP_PXP_ID, 0U, 0U, src_w - 1U, src_h - 1U);
+    PXP_SetAlphaSurfacePosition(LV_GPU_NXP_PXP_ID, 0U, 0U, dest_w - 1U, dest_h - 1U);
     PXP_SetAlphaSurfaceBlendConfig(LV_GPU_NXP_PXP_ID, &asBlendConfig);
     PXP_EnableAlphaSurfaceOverlayColorKey(LV_GPU_NXP_PXP_ID, false);
 
@@ -283,102 +325,162 @@ void lv_gpu_nxp_pxp_blit(lv_color_t * dest_buf, const lv_area_t * dest_area, lv_
     };
     PXP_SetOutputBufferConfig(LV_GPU_NXP_PXP_ID, &outputBufferConfig);
 
-    lv_gpu_nxp_pxp_run();
+    lv_gpu_nxp_pxp_run(); /* Start PXP task */
+
+    return LV_RES_OK;
 }
 
-void lv_gpu_nxp_pxp_blit_transform(lv_color_t * dest_buf, const lv_area_t * dest_area, lv_coord_t dest_stride,
-                                   const lv_color_t * src_buf, const lv_area_t * src_area, lv_coord_t src_stride,
-                                   const lv_draw_img_dsc_t * dsc, lv_img_cf_t cf)
+lv_res_t lv_gpu_nxp_pxp_blit_transform(lv_color_t * dest_buf, const lv_area_t * dest_area, lv_coord_t dest_stride,
+                                       const lv_color_t * src_buf, const lv_area_t * src_area,
+                                       const lv_draw_img_dsc_t * dsc, lv_img_cf_t cf)
 {
-    bool has_recolor = (dsc->recolor_opa != LV_OPA_TRANSP);
-    bool has_rotation = (dsc->angle != 0);
+    uint32_t dest_size = lv_area_get_size(dest_area);
 
-    if(has_recolor || has_rotation) {
-        if(dsc->opa >= (lv_opa_t)LV_OPA_MAX && !lv_img_cf_has_alpha(cf) && !lv_img_cf_is_chroma_keyed(cf)) {
-            lv_pxp_blit_cover(dest_buf, dest_area, dest_stride, src_buf, src_area, src_stride, dsc, cf);
-            return;
+    if(dsc->opa >= (lv_opa_t)LV_OPA_MAX) {
+        if(dest_size < LV_GPU_NXP_PXP_BLIT_SIZE_LIMIT) {
+            PXP_LOG_TRACE("Area size %d smaller than limit %d.", dest_size, LV_GPU_NXP_PXP_BLIT_SIZE_LIMIT);
+            return LV_RES_INV;
         }
-        else {
-            /*Recolor and/or rotation with alpha or opacity is done in two steps.*/
-            lv_pxp_blit_opa(dest_buf, dest_area, dest_stride, src_buf, src_area, src_stride, dsc, cf);
-            return;
+    }
+    else {
+        if(dest_size < LV_GPU_NXP_PXP_BLIT_OPA_SIZE_LIMIT) {
+            PXP_LOG_TRACE("Area size %d smaller than limit %d.", dest_size, LV_GPU_NXP_PXP_BLIT_OPA_SIZE_LIMIT);
+            return LV_RES_INV;
         }
     }
 
-    lv_pxp_blit_cf(dest_buf, dest_area, dest_stride, src_buf, src_area, src_stride, dsc, cf);
+    bool recolor = (dsc->recolor_opa != LV_OPA_TRANSP);
+    bool rotation = (dsc->angle != 0);
+
+    if(rotation) {
+        if(dsc->angle != 0 && dsc->angle != 900 && dsc->angle != 1800 && dsc->angle != 2700) {
+            PXP_LOG_TRACE("Rotation angle %d is not supported. PXP can rotate only 90x angle.", dsc->angle);
+            return LV_RES_INV;
+        }
+    }
+
+    if(recolor || rotation) {
+        if(dsc->opa >= (lv_opa_t)LV_OPA_MAX && !lv_img_cf_has_alpha(cf) && !lv_img_cf_is_chroma_keyed(cf))
+            return lv_gpu_nxp_pxp_blit_cover(dest_buf, dest_area, dest_stride, src_buf, src_area, dsc, cf);
+        else
+            /*Recolor and/or rotation with alpha or opacity is done in two steps.*/
+            return lv_gpu_nxp_pxp_blit_opa(dest_buf, dest_area, dest_stride, src_buf, src_area, dsc, cf);
+    }
+
+    return lv_gpu_nxp_pxp_blit_cf(dest_buf, dest_area, dest_stride, src_buf, src_area, dsc, cf);
 }
 
 /**********************
  *   STATIC FUNCTIONS
  **********************/
 
-static void lv_pxp_blit_opa(lv_color_t * dest_buf, const lv_area_t * dest_area, lv_coord_t dest_stride,
-                            const lv_color_t * src_buf, const lv_area_t * src_area, lv_coord_t src_stride,
-                            const lv_draw_img_dsc_t * dsc, lv_img_cf_t cf)
-{
-    lv_coord_t temp_area_w = lv_area_get_width(dest_area);
-    lv_coord_t temp_area_h = lv_area_get_height(dest_area);
-    const lv_area_t temp_area = {
-        .x1 = 0,
-        .y1 = 0,
-        .x2 = temp_area_w - 1,
-        .y2 = temp_area_h - 1
-    };
-
-    /*Step 1: Transform with full opacity to temporary buffer*/
-    lv_pxp_blit_cover((lv_color_t *)temp_buf, &temp_area, temp_area_w, src_buf, src_area, src_stride, dsc, cf);
-
-    /*Step 2: Blit temporary result with required opacity to output*/
-    lv_pxp_blit_cf(dest_buf, dest_area, dest_stride, (lv_color_t *)temp_buf, &temp_area, temp_area_w, dsc, cf);
-}
-static void lv_pxp_blit_cover(lv_color_t * dest_buf, const lv_area_t * dest_area, lv_coord_t dest_stride,
-                              const lv_color_t * src_buf, const lv_area_t * src_area, lv_coord_t src_stride,
-                              const lv_draw_img_dsc_t * dsc, lv_img_cf_t cf)
+static lv_res_t lv_gpu_nxp_pxp_blit_opa(lv_color_t * dest_buf, const lv_area_t * dest_area, lv_coord_t dest_stride,
+                                        const lv_color_t * src_buf, const lv_area_t * src_area,
+                                        const lv_draw_img_dsc_t * dsc, lv_img_cf_t cf)
 {
     lv_coord_t dest_w = lv_area_get_width(dest_area);
     lv_coord_t dest_h = lv_area_get_height(dest_area);
-    lv_coord_t src_w = lv_area_get_width(src_area);
-    lv_coord_t src_h = lv_area_get_height(src_area);
+    lv_res_t res;
+    uint32_t size = dest_w * dest_h * sizeof(lv_color_t);
 
-    bool has_recolor = (dsc->recolor_opa != LV_OPA_TRANSP);
-    bool has_rotation = (dsc->angle != 0);
+    if(ROUND_UP(size, ALIGN_SIZE) >= LV_MEM_SIZE)
+        PXP_RETURN_INV("Insufficient memory for temporary buffer. Please increase LV_MEM_SIZE.");
 
-    lv_gpu_nxp_pxp_reset();
+    lv_color_t * tmp_buf = (lv_color_t *)lv_mem_buf_get(size);
+    if(!tmp_buf)
+        PXP_RETURN_INV("Allocating temporary buffer failed.");
 
-    if(has_rotation) {
+    const lv_area_t tmp_area = {
+        .x1 = 0,
+        .y1 = 0,
+        .x2 = dest_w - 1,
+        .y2 = dest_h - 1
+    };
+
+    /*Step 1: Transform with full opacity to temporary buffer*/
+    res = lv_gpu_nxp_pxp_blit_cover(tmp_buf, &tmp_area, dest_w, src_buf, src_area, dsc, cf);
+    if(res != LV_RES_OK) {
+        PXP_LOG_TRACE("Blit cover with full opacity failed.");
+        lv_mem_buf_release(tmp_buf);
+
+        return res;
+    }
+
+    /*Step 2: Blit temporary results with required opacity to output*/
+    res = lv_gpu_nxp_pxp_blit_cf(dest_buf, dest_area, dest_stride, tmp_buf, &tmp_area, dsc, cf);
+
+    /*Clean-up memory*/
+    lv_mem_buf_release(tmp_buf);
+
+    return res;
+}
+
+static lv_res_t lv_gpu_nxp_pxp_blit_cover(lv_color_t * dest_buf, const lv_area_t * dest_area,
+                                          lv_coord_t dest_stride,
+                                          const lv_color_t * src_buf, const lv_area_t * src_area,
+                                          const lv_draw_img_dsc_t * dsc, lv_img_cf_t cf)
+{
+    lv_coord_t dest_w = lv_area_get_width(dest_area);
+    lv_coord_t dest_h = lv_area_get_height(dest_area);
+
+    bool recolor = (dsc->recolor_opa != LV_OPA_TRANSP);
+    bool rotation = (dsc->angle != 0);
+
+    PXP_Init(LV_GPU_NXP_PXP_ID);
+    PXP_EnableCsc1(LV_GPU_NXP_PXP_ID, false); /*Disable CSC1, it is enabled by default.*/
+    PXP_SetProcessBlockSize(LV_GPU_NXP_PXP_ID, kPXP_BlockSize16); /*block size 16x16 for higher performance*/
+
+    if(rotation) {
+        /*
+         * PXP is set to process 16x16 blocks to optimize the system for memory
+         * bandwidth and image processing time.
+         * The output engine essentially truncates any output pixels after the
+         * desired number of pixels has been written.
+         * When rotating a source image and the output is not divisible by the block
+         * size, the incorrect pixels could be truncated and the final output image
+         * can look shifted.
+         */
+        if(lv_area_get_width(src_area) % 16 || lv_area_get_height(src_area) % 16) {
+            PXP_LOG_TRACE("Rotation is not supported for image w/o alignment to block size 16x16.");
+            return LV_RES_INV;
+        }
+
         /*Convert rotation angle*/
-        pxp_rotate_degree_t pxp_angle;
+        pxp_rotate_degree_t pxp_rot;
         switch(dsc->angle) {
             case 0:
-                pxp_angle = kPXP_Rotate0;
+                pxp_rot = kPXP_Rotate0;
                 break;
             case 900:
-                pxp_angle = kPXP_Rotate90;
+                pxp_rot = kPXP_Rotate90;
                 break;
             case 1800:
-                pxp_angle = kPXP_Rotate180;
+                pxp_rot = kPXP_Rotate180;
                 break;
             case 2700:
-                pxp_angle = kPXP_Rotate270;
+                pxp_rot = kPXP_Rotate270;
                 break;
             default:
-                pxp_angle = kPXP_Rotate0;
+                PXP_LOG_TRACE("Rotation angle %d is not supported. PXP can rotate only 90x angle.", dsc->angle);
+                return LV_RES_INV;
         }
-        PXP_SetRotateConfig(LV_GPU_NXP_PXP_ID, kPXP_RotateOutputBuffer, pxp_angle, kPXP_FlipDisable);
+        PXP_SetRotateConfig(LV_GPU_NXP_PXP_ID, kPXP_RotateOutputBuffer, pxp_rot, kPXP_FlipDisable);
     }
+
+    lv_coord_t src_stride = lv_area_get_width(src_area);
 
     /*AS buffer - source image*/
     pxp_as_buffer_config_t asBufferConfig = {
         .pixelFormat = PXP_AS_PIXEL_FORMAT,
-        .bufferAddr = (uint32_t)(src_buf + src_stride * src_area->y1 + src_area->x1),
+        .bufferAddr = (uint32_t)src_buf,
         .pitchBytes = src_stride * sizeof(lv_color_t)
     };
     PXP_SetAlphaSurfaceBufferConfig(LV_GPU_NXP_PXP_ID, &asBufferConfig);
-    PXP_SetAlphaSurfacePosition(LV_GPU_NXP_PXP_ID, 0U, 0U, src_w - 1U, src_h - 1U);
+    PXP_SetAlphaSurfacePosition(LV_GPU_NXP_PXP_ID, 0U, 0U, dest_w - 1U, dest_h - 1U);
 
     /*Disable PS buffer*/
     PXP_SetProcessSurfacePosition(LV_GPU_NXP_PXP_ID, 0xFFFFU, 0xFFFFU, 0U, 0U);
-    if(has_recolor)
+    if(recolor)
         /*Use as color generator*/
         PXP_SetProcessSurfaceBackGroundColor(LV_GPU_NXP_PXP_ID, lv_color_to32(dsc->recolor));
 
@@ -394,7 +496,7 @@ static void lv_pxp_blit_cover(lv_color_t * dest_buf, const lv_area_t * dest_area
     };
     PXP_SetOutputBufferConfig(LV_GPU_NXP_PXP_ID, &outputBufferConfig);
 
-    if(has_recolor || lv_img_cf_has_alpha(cf)) {
+    if(recolor || lv_img_cf_has_alpha(cf)) {
         /**
          * Configure Porter-Duff blending.
          *
@@ -410,7 +512,7 @@ static void lv_pxp_blit_cover(lv_color_t * dest_buf, const lv_area_t * dest_area
             .srcGlobalAlphaMode = lv_img_cf_has_alpha(cf) ? kPXP_PorterDuffLocalAlpha : kPXP_PorterDuffGlobalAlpha,
             .dstFactorMode = kPXP_PorterDuffFactorStraight,
             .srcFactorMode = kPXP_PorterDuffFactorInversed,
-            .dstGlobalAlpha = has_recolor ? dsc->recolor_opa : 0x00,
+            .dstGlobalAlpha = recolor ? dsc->recolor_opa : 0x00,
             .srcGlobalAlpha = 0xff,
             .dstAlphaMode = kPXP_PorterDuffAlphaStraight, /*don't care*/
             .srcAlphaMode = kPXP_PorterDuffAlphaStraight
@@ -418,19 +520,22 @@ static void lv_pxp_blit_cover(lv_color_t * dest_buf, const lv_area_t * dest_area
         PXP_SetPorterDuffConfig(LV_GPU_NXP_PXP_ID, &pdConfig);
     }
 
-    lv_gpu_nxp_pxp_run();
+    lv_gpu_nxp_pxp_run(); /*Start PXP task*/
+
+    return LV_RES_OK;
 }
 
-static void lv_pxp_blit_cf(lv_color_t * dest_buf, const lv_area_t * dest_area, lv_coord_t dest_stride,
-                           const lv_color_t * src_buf, const lv_area_t * src_area, lv_coord_t src_stride,
-                           const lv_draw_img_dsc_t * dsc, lv_img_cf_t cf)
+static lv_res_t lv_gpu_nxp_pxp_blit_cf(lv_color_t * dest_buf, const lv_area_t * dest_area,
+                                       lv_coord_t dest_stride,
+                                       const lv_color_t * src_buf, const lv_area_t * src_area,
+                                       const lv_draw_img_dsc_t * dsc, lv_img_cf_t cf)
 {
     lv_coord_t dest_w = lv_area_get_width(dest_area);
     lv_coord_t dest_h = lv_area_get_height(dest_area);
-    lv_coord_t src_w = lv_area_get_width(src_area);
-    lv_coord_t src_h = lv_area_get_height(src_area);
 
-    lv_gpu_nxp_pxp_reset();
+    PXP_Init(LV_GPU_NXP_PXP_ID);
+    PXP_EnableCsc1(LV_GPU_NXP_PXP_ID, false); /*Disable CSC1, it is enabled by default.*/
+    PXP_SetProcessBlockSize(LV_GPU_NXP_PXP_ID, kPXP_BlockSize16); /*block size 16x16 for higher performance*/
 
     pxp_as_blend_config_t asBlendConfig = {
         .alpha = dsc->opa,
@@ -461,26 +566,28 @@ static void lv_pxp_blit_cf(lv_color_t * dest_buf, const lv_area_t * dest_area, l
             asBlendConfig.alphaMode = lv_img_cf_has_alpha(cf) ? kPXP_AlphaMultiply : kPXP_AlphaOverride;
         }
         PXP_SetProcessSurfaceBufferConfig(LV_GPU_NXP_PXP_ID, &psBufferConfig);
-        PXP_SetProcessSurfacePosition(LV_GPU_NXP_PXP_ID, 0U, 0U, dest_w - 1U, dest_h - 1U);
+        PXP_SetProcessSurfacePosition(LV_GPU_NXP_PXP_ID, 0U, 0U, dest_w - 1, dest_h - 1);
     }
+
+    lv_coord_t src_stride = lv_area_get_width(src_area);
 
     /*AS buffer - source image*/
     pxp_as_buffer_config_t asBufferConfig = {
         .pixelFormat = PXP_AS_PIXEL_FORMAT,
-        .bufferAddr = (uint32_t)(src_buf + src_stride * src_area->y1 + src_area->x1),
+        .bufferAddr = (uint32_t)src_buf,
         .pitchBytes = src_stride * sizeof(lv_color_t)
     };
     PXP_SetAlphaSurfaceBufferConfig(LV_GPU_NXP_PXP_ID, &asBufferConfig);
-    PXP_SetAlphaSurfacePosition(LV_GPU_NXP_PXP_ID, 0U, 0U, src_w - 1U, src_h - 1U);
+    PXP_SetAlphaSurfacePosition(LV_GPU_NXP_PXP_ID, 0U, 0U, dest_w - 1U, dest_h - 1U);
     PXP_SetAlphaSurfaceBlendConfig(LV_GPU_NXP_PXP_ID, &asBlendConfig);
 
     if(lv_img_cf_is_chroma_keyed(cf)) {
         lv_color_t colorKeyLow = LV_COLOR_CHROMA_KEY;
         lv_color_t colorKeyHigh = LV_COLOR_CHROMA_KEY;
 
-        bool has_recolor = (dsc->recolor_opa != LV_OPA_TRANSP);
+        bool recolor = (dsc->recolor_opa != LV_OPA_TRANSP);
 
-        if(has_recolor) {
+        if(recolor) {
             /* New color key after recoloring */
             lv_color_t colorKey =  lv_color_mix(dsc->recolor, LV_COLOR_CHROMA_KEY, dsc->recolor_opa);
 
@@ -488,11 +595,11 @@ static void lv_pxp_blit_cf(lv_color_t * dest_buf, const lv_area_t * dest_area, l
             LV_COLOR_SET_G(colorKeyLow, colorKey.ch.green != 0 ? colorKey.ch.green - 1 : 0);
             LV_COLOR_SET_B(colorKeyLow, colorKey.ch.blue != 0 ? colorKey.ch.blue - 1 : 0);
 
-#if LV_COLOR_DEPTH == 16
+#if LV_COLOR_DEPTH==16
             LV_COLOR_SET_R(colorKeyHigh, colorKey.ch.red != 0x1f ? colorKey.ch.red + 1 : 0x1f);
             LV_COLOR_SET_G(colorKeyHigh, colorKey.ch.green != 0x3f ? colorKey.ch.green + 1 : 0x3f);
             LV_COLOR_SET_B(colorKeyHigh, colorKey.ch.blue != 0x1f ? colorKey.ch.blue + 1 : 0x1f);
-#else /*LV_COLOR_DEPTH == 32*/
+#else /*LV_COLOR_DEPTH==32*/
             LV_COLOR_SET_R(colorKeyHigh, colorKey.ch.red != 0xff ? colorKey.ch.red + 1 : 0xff);
             LV_COLOR_SET_G(colorKeyHigh, colorKey.ch.green != 0xff ? colorKey.ch.green + 1 : 0xff);
             LV_COLOR_SET_B(colorKeyHigh, colorKey.ch.blue != 0xff ? colorKey.ch.blue + 1 : 0xff);
@@ -517,7 +624,9 @@ static void lv_pxp_blit_cf(lv_color_t * dest_buf, const lv_area_t * dest_area, l
     };
     PXP_SetOutputBufferConfig(LV_GPU_NXP_PXP_ID, &outputBufferConfig);
 
-    lv_gpu_nxp_pxp_run();
+    lv_gpu_nxp_pxp_run(); /* Start PXP task */
+
+    return LV_RES_OK;
 }
 
 #endif /*LV_USE_GPU_NXP_PXP*/

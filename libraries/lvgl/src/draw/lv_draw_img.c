@@ -69,19 +69,18 @@ void lv_draw_img(lv_draw_ctx_t * draw_ctx, const lv_draw_img_dsc_t * dsc, const 
 
     if(dsc->opa <= LV_OPA_MIN) return;
 
-    lv_res_t res = LV_RES_INV;
-
+    lv_res_t res;
     if(draw_ctx->draw_img) {
         res = draw_ctx->draw_img(draw_ctx, dsc, coords, src);
     }
-
-    if(res != LV_RES_OK) {
+    else {
         res = decode_and_draw(draw_ctx, dsc, coords, src);
     }
 
-    if(res != LV_RES_OK) {
+    if(res == LV_RES_INV) {
         LV_LOG_WARN("Image draw error");
         show_error(draw_ctx, coords, "No\ndata");
+        return;
     }
 }
 
