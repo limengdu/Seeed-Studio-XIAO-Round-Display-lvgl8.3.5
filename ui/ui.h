@@ -33,7 +33,6 @@ extern lv_obj_t * ui_powerplus;
 extern lv_obj_t * ui_powernegative;
 extern lv_obj_t * ui_runingman;
 extern lv_obj_t * ui_powerlogo;
-extern lv_obj_t * ui_dial;
 extern lv_obj_t * ui_minute;
 extern lv_obj_t * ui_hour;
 extern lv_obj_t * ui_second;
@@ -81,13 +80,14 @@ extern lv_obj_t * ui_music;
 extern lv_obj_t * ui_background3;
 extern lv_obj_t * ui_musicbg;
 extern lv_obj_t * ui_sound;
-extern lv_obj_t * ui_songprogress;
 extern lv_obj_t * ui_songname;
 extern lv_obj_t * ui_musictime;
 extern lv_obj_t * ui_up;
 extern lv_obj_t * ui_next;
 void ui_event_play(lv_event_t * e);
 extern lv_obj_t * ui_play;
+void ui_event_backbutton2(lv_event_t * e);
+extern lv_obj_t * ui_backbutton2;
 
 
 LV_IMG_DECLARE(ui_img_pannel_240w_png);    // assets\pannel_240w.png
