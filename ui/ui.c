@@ -168,15 +168,12 @@ void ui_event_maindail(lv_event_t * e)
 }
 void ui_event_timestart(lv_event_t * e)
 {
-    int i = 0;
     lv_event_code_t event_code = lv_event_get_code(e);
     lv_obj_t * target = lv_event_get_target(e);
-//    if(event_code == LV_EVENT_RELEASED) {
-    if(i == 0) {
+    if(event_code == LV_EVENT_RELEASED) {
         second_Animation(ui_second, 0);
         minute_Animation(ui_minute, 0);
         hour_Animation(ui_hour, 0);
-        i = 1;
     }
 }
 void ui_event_backbutton(lv_event_t * e)
