@@ -1,6 +1,9 @@
 #include <lvgl.h>
 #include <TFT_eSPI.h>
 #include "ui.h"
+#include <SPI.h>
+#define USE_TFT_ESPI_LIBRARY
+#include "lv_xiao_round_screen.h"
 
 /*If you want to use the LVGL examples,
   make sure to install the lv_examples Arduino library
@@ -15,7 +18,7 @@ static const uint16_t screenHeight = 240;
 static lv_disp_draw_buf_t draw_buf;
 static lv_color_t buf[ screenWidth * screenHeight / 10 ];
 
-TFT_eSPI tft = TFT_eSPI(screenWidth, screenHeight); /* TFT instance */
+//TFT_eSPI tft = TFT_eSPI(screenWidth, screenHeight); /* TFT instance */
 
 #if LV_USE_LOG != 0
 /* Serial debugging */
@@ -43,17 +46,19 @@ void my_disp_flush( lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *colo
 /*Read the touchpad*/
 void my_touchpad_read( lv_indev_drv_t * indev_driver, lv_indev_data_t * data )
 {
-    uint16_t touchX = 0, touchY = 0;
+    lv_coord_t touchX = 0, touchY = 0;
 
-    bool touched = tft.getTouch( &touchX, &touchY, 600 );
+//    bool touched = tft.getTouch( &touchX, &touchY, 600 );
 
-    if( !touched )
+    if( !chsc6x_is_pressed() )
     {
         data->state = LV_INDEV_STATE_REL;
     }
     else
     {
         data->state = LV_INDEV_STATE_PR;
+
+        chsc6x_get_xy(&touchX, &touchY);
 
         /*Set the coordinates*/
         data->point.x = touchX;
@@ -71,6 +76,8 @@ void setup()
 {
     Serial.begin( 115200 ); /* prepare for possible serial debug */
 
+    lv_xiao_touch_init();
+
     String LVGL_Arduino = "Hello Arduino! ";
     LVGL_Arduino += String('V') + lv_version_major() + "." + lv_version_minor() + "." + lv_version_patch();
 
@@ -84,7 +91,7 @@ void setup()
 #endif
 
     tft.begin();          /* TFT init */
-    tft.setRotation( 2 ); /* Landscape orientation, flipped */
+    tft.setRotation( 0 ); /* Landscape orientation, flipped */
 
     lv_disp_draw_buf_init( &draw_buf, buf, NULL, screenWidth * screenHeight / 10 );
 
