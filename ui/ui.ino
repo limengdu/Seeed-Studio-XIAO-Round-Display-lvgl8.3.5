@@ -1,7 +1,6 @@
 #include <lvgl.h>
 #include <TFT_eSPI.h>
 #include "ui.h"
-#include <SPI.h>
 #define USE_TFT_ESPI_LIBRARY
 #include "lv_xiao_round_screen.h"
 
@@ -76,8 +75,6 @@ void setup()
 {
     Serial.begin( 115200 ); /* prepare for possible serial debug */
 
-    lv_xiao_touch_init();
-
     String LVGL_Arduino = "Hello Arduino! ";
     LVGL_Arduino += String('V') + lv_version_major() + "." + lv_version_minor() + "." + lv_version_patch();
 
@@ -85,6 +82,9 @@ void setup()
     Serial.println( "I am LVGL_Arduino" );
 
     lv_init();
+
+    lv_xiao_disp_init();
+    lv_xiao_touch_init();
 
 #if LV_USE_LOG != 0
     lv_log_register_print_cb( my_print ); /* register print function for debugging */
