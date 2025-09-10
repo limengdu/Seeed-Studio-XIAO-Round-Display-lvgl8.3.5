@@ -1,0 +1,1 @@
+#define BOARD_SCREEN_COMBO 521
