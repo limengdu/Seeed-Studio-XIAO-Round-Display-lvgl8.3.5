@@ -1,7 +1,6 @@
 #include <TFT_eSPI.h> // Graphics and font library for ST7735 driver chip
 #include <SPI.h>
 #include "NotoSansBold15.h"
-#include <Adafruit_GFX.h>
 
 TFT_eSPI tft = TFT_eSPI();  // Invoke library, pins defined in User_Setup.h
 TFT_eSprite spr = TFT_eSprite(&tft); // Sprite
